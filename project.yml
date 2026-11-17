@@ -1,0 +1,23 @@
+name: AIRSTRIKE
+options:
+  bundleIdPrefix: com.andre
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    PRODUCT_BUNDLE_IDENTIFIER: com.andre.airstrike
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+targets:
+  AIRSTRIKE:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_NAME: AIRSTRIKE
+        INFOPLIST_KEY_CFBundleDisplayName: AIRSTRIKE
+        INFOPLIST_KEY_NSGameControllerUsageDescription: "AIRSTRIKE uses a connected game controller for flight controls."
