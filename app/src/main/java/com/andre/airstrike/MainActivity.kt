@@ -5,142 +5,114 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.widget.FrameLayout
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Color
-import kotlin.math.sin
+import android.graphics.RectF
+import kotlin.math.min
+import kotlin.math.sqrt
 
 class MainActivity : Activity() {
-    private lateinit var game: FlightView
+    private lateinit var flight: FlightSurface
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
-        game = FlightView(this)
-        setContentView(game)
+        flight = FlightSurface(this)
+        val root = FrameLayout(this)
+        root.addView(flight, FrameLayout.LayoutParams(-1,-1))
+        root.addView(TouchControls(this, flight), FrameLayout.LayoutParams(-1,-1))
+        setContentView(root)
     }
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (game.key(keyCode, true)) return true
-        return super.onKeyDown(keyCode, event)
+    override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean {
+        if (flight.controllerKey(keyCode,true)) return true
+        return super.onKeyDown(keyCode,event)
     }
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        game.key(keyCode, false)
-        return super.onKeyUp(keyCode, event)
+    override fun onKeyUp(keyCode:Int,event:KeyEvent):Boolean {
+        if (flight.controllerKey(keyCode,false)) return true
+        return super.onKeyUp(keyCode,event)
     }
-    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-        if (game.motion(event)) return true
+    override fun onGenericMotionEvent(event:MotionEvent):Boolean {
+        if (event.source and android.view.InputDevice.SOURCE_JOYSTICK == android.view.InputDevice.SOURCE_JOYSTICK && event.action == MotionEvent.ACTION_MOVE) {
+            flight.joystick(event.getAxisValue(MotionEvent.AXIS_X),event.getAxisValue(MotionEvent.AXIS_Y))
+            val rt=event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
+            val lt=event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
+            if(rt>0.08f) flight.throttle=(0.45f+rt*0.55f).coerceIn(0f,1f)
+            if(lt>0.08f) flight.throttle=(0.55f-lt*0.45f).coerceIn(0f,1f)
+            return true
+        }
         return super.onGenericMotionEvent(event)
     }
 }
 
-private class FlightView : View {
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var speed = 0.45f
-    private var steer = 0f
-    private var pitch = 0f
-    private var boost = false
-    private var frame = 0L
-    private var last = System.nanoTime()
-    private var slowTouch = false
-    private var boostTouch = false
-    private var downX = 0f
-    private var downY = 0f
-
-    constructor(context: android.content.Context) : super(context) {
-        isFocusable = true
-        isFocusableInTouchMode = true
+private class TouchControls(context:android.content.Context, private val game:FlightSurface):View(context) {
+    private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
+    private var activePointer=-1
+    private var joyX=0f
+    private var joyY=0f
+    init { isClickable=true }
+    override fun onDraw(c:Canvas) {
+        super.onDraw(c)
+        val w=width.toFloat(); val h=height.toFloat()
+        paint.color=Color.argb(150,8,18,32); paint.style=Paint.Style.FILL
+        c.drawRoundRect(RectF(22f,18f,260f,78f),18f,18f,paint)
+        paint.color=Color.WHITE; paint.textSize=27f; paint.isFakeBoldText=true
+        c.drawText("AIRSTRIKE",42f,56f,paint)
+        paint.textSize=17f; paint.isFakeBoldText=false
+        c.drawText("3D FLIGHT  •  TOUCH OR DUALSENSE",42f,99f,paint)
+        val jx=w*0.15f; val jy=h*0.76f; val jr=min(w*0.095f,h*0.17f)
+        paint.color=Color.argb(90,8,18,32); c.drawCircle(jx,jy,jr,paint)
+        paint.color=Color.argb(210,225,239,250); paint.style=Paint.Style.STROKE; paint.strokeWidth=4f
+        c.drawCircle(jx,jy,jr,paint); c.drawLine(jx-jr*0.65f,jy,jx+jr*0.65f,jy,paint); c.drawLine(jx,jy-jr*0.65f,jx,jy+jr*0.65f,paint)
+        paint.style=Paint.Style.FILL; paint.color=Color.argb(220,50,145,230)
+        c.drawCircle(jx+joyX*jr*0.55f,jy+joyY*jr*0.55f,jr*0.30f,paint)
+        paint.color=Color.WHITE; paint.textSize=16f; c.drawText("STEER",jx-25f,jy+jr+25f,paint)
+        button(c,w*0.78f,h*0.77f,"BRAKE",Color.rgb(55,110,170))
+        button(c,w*0.91f,h*0.77f,"BOOST",Color.rgb(210,105,35))
+        button(c,w*0.91f,h*0.48f,"THROTTLE",Color.rgb(35,145,100))
+        paint.color=Color.argb(210,255,255,255); paint.textSize=15f
+        c.drawText("L2 BRAKE   R2 THROTTLE   ✕ BOOST",w*0.58f, h-22f,paint)
     }
-
-    fun key(code: Int, pressed: Boolean): Boolean {
-        when (code) {
-            KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_SPACE -> boost = pressed
-            KeyEvent.KEYCODE_DPAD_LEFT -> steer = if (pressed) -0.7f else 0f
-            KeyEvent.KEYCODE_DPAD_RIGHT -> steer = if (pressed) 0.7f else 0f
-            KeyEvent.KEYCODE_DPAD_UP -> pitch = if (pressed) -0.4f else 0f
-            KeyEvent.KEYCODE_DPAD_DOWN -> pitch = if (pressed) 0.4f else 0f
-            KeyEvent.KEYCODE_BUTTON_R2 -> speed = if (pressed) 0.95f else 0.45f
-            KeyEvent.KEYCODE_BUTTON_L2 -> speed = if (pressed) 0.2f else 0.45f
-            else -> return false
-        }
-        return true
+    private fun button(c:Canvas,cx:Float,cy:Float,label:String,color:Int) {
+        val r=min(width*0.055f,height*0.105f)
+        paint.style=Paint.Style.FILL; paint.color=Color.argb(175,8,18,32); c.drawCircle(cx,cy,r+5f,paint)
+        paint.color=color; c.drawCircle(cx,cy,r,paint)
+        paint.color=Color.WHITE; paint.textSize=if(label=="THROTTLE") 13f else 16f; paint.isFakeBoldText=true
+        val tw=paint.measureText(label); c.drawText(label,cx-tw/2f,cy+6f,paint); paint.isFakeBoldText=false
     }
-
-    fun motion(e: MotionEvent): Boolean {
-        if (e.source and android.view.InputDevice.SOURCE_JOYSTICK == android.view.InputDevice.SOURCE_JOYSTICK && e.action == MotionEvent.ACTION_MOVE) {
-            steer = e.getAxisValue(MotionEvent.AXIS_X).coerceIn(-1f, 1f)
-            pitch = e.getAxisValue(MotionEvent.AXIS_Y).coerceIn(-1f, 1f)
-            val rt = e.getAxisValue(MotionEvent.AXIS_RTRIGGER)
-            val lt = e.getAxisValue(MotionEvent.AXIS_LTRIGGER)
-            if (rt > 0.1f) speed = (0.35f + rt * 0.65f).coerceIn(0.15f, 1f)
-            if (lt > 0.1f) speed = (0.55f - lt * 0.4f).coerceAtLeast(0.15f)
-            return true
-        }
-        return false
-    }
-
-    override fun onTouchEvent(e: MotionEvent): Boolean {
-        when (e.action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                downX = e.x; downY = e.y
-                slowTouch = e.x < width * 0.25f
-                boostTouch = e.x > width * 0.75f
-                if (slowTouch) speed = (speed - 0.15f).coerceAtLeast(0.15f)
-                if (boostTouch) speed = (speed + 0.2f).coerceAtMost(1f)
-                return true
+    override fun onTouchEvent(e:MotionEvent):Boolean {
+        val w=width.toFloat(); val h=height.toFloat()
+        when(e.actionMasked) {
+            MotionEvent.ACTION_DOWN,MotionEvent.ACTION_POINTER_DOWN -> {
+                val i=e.actionIndex; val x=e.getX(i); val y=e.getY(i)
+                if(x<w*0.36f) { activePointer=e.getPointerId(i); updateJoy(x,y); return true }
+                applyButton(x,y,true); return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (downX < width * 0.4f) {
-                    steer = ((e.x - downX) / (width * 0.25f)).coerceIn(-1f, 1f)
-                    pitch = ((e.y - downY) / (height * 0.3f)).coerceIn(-1f, 1f)
+                if(activePointer!=-1) {
+                    val i=(0 until e.pointerCount).firstOrNull{e.getPointerId(it)==activePointer}
+                    if(i!=null) updateJoy(e.getX(i),e.getY(i))
                 }
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                steer = 0f; pitch = 0f; slowTouch = false; boostTouch = false
+            MotionEvent.ACTION_UP,MotionEvent.ACTION_POINTER_UP,MotionEvent.ACTION_CANCEL -> {
+                val i=e.actionIndex
+                if(e.getPointerId(i)==activePointer) { activePointer=-1; joyX=0f; joyY=0f; game.joystick(0f,0f); invalidate() }
+                val x=e.getX(i); val y=e.getY(i); applyButton(x,y,false)
                 return true
             }
         }
         return true
     }
-
-    override fun onDraw(c: Canvas) {
-        super.onDraw(c)
-        val dt = ((System.nanoTime() - last) / 1e9f).coerceAtMost(0.05f)
-        last = System.nanoTime()
-        frame += 1
-        if (boost) speed = (speed + dt * 0.35f).coerceAtMost(1f)
-        val w = width.toFloat(); val h = height.toFloat()
-        c.drawColor(Color.rgb(55, 135, 190))
-        p.color = Color.rgb(190, 220, 235); p.alpha = 180
-        for (i in 0..5) {
-            val x = ((i * 227f + frame * speed * 2f) % (w + 180f)) - 90f
-            c.drawOval(x, h * (0.15f + (i % 3) * 0.12f), x + 90, h * (0.20f + (i % 3) * 0.12f), p)
-        }
-        p.color = Color.rgb(35, 105, 85)
-        val horizon = h * 0.72f + pitch * 25
-        c.drawRect(0f, horizon, w, h, p)
-        p.color = Color.rgb(30, 75, 60)
-        for (i in 0..14) {
-            val x = ((i * 173f - frame * speed * 5f) % (w + 120f) + w + 120f) % (w + 120f) - 60f
-            c.drawCircle(x, horizon + 25 + (i % 4) * 12f, 9f, p)
-        }
-        val cx = w * 0.5f + steer * w * 0.18f
-        val cy = h * 0.57f + pitch * 35f + sin(frame / 15.0).toFloat() * 4
-        p.color = Color.rgb(225, 232, 240)
-        c.save(); c.rotate(-steer * 24f, cx, cy)
-        c.drawRoundRect(cx - 13, cy - 58, cx + 13, cy + 55, 12f, 12f, p)
-        p.color = Color.rgb(35, 105, 220)
-        c.drawRect(cx - 82, cy - 5, cx + 82, cy + 5, p)
-        c.drawRect(cx - 33, cy + 32, cx + 33, cy + 38, p)
-        c.restore()
-        p.color = Color.WHITE; p.textSize = 30f; p.isFakeBoldText = true
-        c.drawText("AIRSTRIKE", 28f, 42f, p)
-        p.textSize = 19f
-        c.drawText("SPEED  ${(speed * 240).toInt()} km/h", 30f, 72f, p)
-        p.textSize = 16f
-        c.drawText("LEFT: STEER     RIGHT: BOOST", 30f, h - 24f, p)
-        c.drawRoundRect(w - 150, 22f, w - 28, 64f, 12f, 12f, p)
-        p.color = Color.BLACK; p.textSize = 18f
-        c.drawText("BOOST", w - 125, 50f, p)
-        postInvalidateOnAnimation()
+    private fun updateJoy(x:Float,y:Float) {
+        val cx=width*0.15f; val cy=height*0.76f; val radius=min(width*0.095f,height*0.17f)
+        joyX=((x-cx)/radius).coerceIn(-1f,1f); joyY=((y-cy)/radius).coerceIn(-1f,1f)
+        game.joystick(joyX,joyY); invalidate()
+    }
+    private fun applyButton(x:Float,y:Float,down:Boolean) {
+        val w=width.toFloat(); val h=height.toFloat()
+        if(x>w*0.84f && y>h*0.64f) game.boost=down
+        else if(x>w*0.70f && x<w*0.85f && y>h*0.64f) game.throttle=if(down) 0.15f else 0.55f
+        else if(x>w*0.84f && y<h*0.64f) game.throttle=if(down) 1f else 0.55f
     }
 }
